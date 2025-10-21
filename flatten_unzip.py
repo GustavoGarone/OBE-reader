@@ -2,18 +2,34 @@
 Flatten into DST: copy all images/PDFs from folders and from ZIP/RAR (optionally nested).
 """
 
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Set, Tuple
-import argparse, shutil, tempfile, zipfile, os, sys, subprocess
 
 try:
     import rarfile
 except Exception:
     rarfile = None
 
-IMG_PDF_EXTS: Set[str] = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".gif", ".bmp", ".pdf"}
+IMG_PDF_EXTS: Set[str] = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".gif",
+    ".bmp",
+    ".pdf",
+}
 ARCHIVE_EXTS: Set[str] = {".zip", ".rar"}
+
 
 @dataclass(frozen=True)
 class Config:
@@ -22,12 +38,14 @@ class Config:
     nested_zips: bool = True
     exts: Set[str] = field(default_factory=lambda: IMG_PDF_EXTS)
 
+
 @dataclass
 class Stats:
     copied: int = 0
     extracted: int = 0
     skipped: int = 0
     errors: int = 0
+
 
 def copy_unique(src: Path, dst_dir: Path) -> Path:
     stem, ext = os.path.splitext(src.name)
@@ -39,15 +57,18 @@ def copy_unique(src: Path, dst_dir: Path) -> Path:
     shutil.copy2(src, out)
     return out
 
+
 def iter_files(root: Path) -> Iterable[Path]:
     for p in root.rglob("*"):
         if p.is_file():
             yield p
 
+
 def _extract_zip(zp: Path, td: str) -> None:
     with zipfile.ZipFile(zp) as z:
         members = [m for m in z.infolist() if not m.is_dir()]
         z.extractall(td, members=members)
+
 
 def _extract_rar(rp: Path, td: str) -> None:
     if rarfile is not None:
@@ -56,16 +77,31 @@ def _extract_rar(rp: Path, td: str) -> None:
         return
     bsdtar = shutil.which("bsdtar")
     if bsdtar:
-        subprocess.run([bsdtar, "-x", "-f", str(rp), "-C", td], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            [bsdtar, "-x", "-f", str(rp), "-C", td],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return
     unrar = shutil.which("unrar")
     if unrar:
         Path(td).mkdir(parents=True, exist_ok=True)
-        subprocess.run([unrar, "x", "-o+", str(rp), td], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            [unrar, "x", "-o+", str(rp), td],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return
-    raise RuntimeError("No RAR extractor found. Install 'bsdtar' or 'unrar', or the 'rarfile' Python package.")
+    raise RuntimeError(
+        "No RAR extractor found. Install 'bsdtar' or 'unrar', or the 'rarfile' Python package."
+    )
 
-def handle_archive(ap: Path, dst: Path, nested: bool, exts: Set[str], st: Stats) -> None:
+
+def handle_archive(
+    ap: Path, dst: Path, nested: bool, exts: Set[str], st: Stats
+) -> None:
     try:
         with tempfile.TemporaryDirectory() as td:
             if ap.suffix.lower() == ".zip":
@@ -90,6 +126,7 @@ def handle_archive(ap: Path, dst: Path, nested: bool, exts: Set[str], st: Stats)
         st.errors += 1
         print(f"ERROR extract '{ap}': {e}", file=sys.stderr)
 
+
 def flatten_unzip(cfg: Config) -> Stats:
     cfg.dst.mkdir(parents=True, exist_ok=True)
     st = Stats()
@@ -109,15 +146,25 @@ def flatten_unzip(cfg: Config) -> Stats:
             print(f"ERROR copy '{f}': {e}", file=sys.stderr)
     return st
 
+
 def parse_args() -> Tuple[Path, Path, bool]:
-    ap = argparse.ArgumentParser(description="Flatten: copy all images/PDFs and extract ZIP/RAR into DST.")
+    ap = argparse.ArgumentParser(
+        description="Flatten: copy all images/PDFs and extract ZIP/RAR into DST."
+    )
     ap.add_argument("src", type=Path, help="Origem.")
     ap.add_argument("dst", type=Path, help="Destino achatado.")
-    ap.add_argument("--no-nested", action="store_true", help="Não processar arquivos-compactados dentro de compactados.")
+    ap.add_argument(
+        "--no-nested",
+        action="store_true",
+        help="Não processar arquivos-compactados dentro de compactados.",
+    )
     a = ap.parse_args()
     return a.src, a.dst, (not a.no_nested)
+
 
 if __name__ == "__main__":
     src, dst, nested = parse_args()
     st = flatten_unzip(Config(src=src, dst=dst, nested_zips=nested))
-    print(f"copied={st.copied} extracted={st.extracted} skipped={st.skipped} errors={st.errors}")
+    print(
+        f"copied={st.copied} extracted={st.extracted} skipped={st.skipped} errors={st.errors}"
+    )
