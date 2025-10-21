@@ -1,30 +1,37 @@
+import csv
 from dataclasses import dataclass
-from pathlib import Path
 from math import ceil
-from typing import Optional, Iterable, Tuple, List, Sequence, Literal
-import numpy as np
-import cv2, csv
+from pathlib import Path
+from typing import Iterable, List, Literal, Sequence, Tuple
+
+import cv2
+import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib, gc
+import numpy as np
 
 
 @dataclass(frozen=True)
 class Quad:
     """Ordered TL, TR, BR, BL."""
+
     tl: Tuple[float, float]
     tr: Tuple[float, float]
     br: Tuple[float, float]
     bl: Tuple[float, float]
 
+
 @dataclass(frozen=True)
 class WarpConfig:
     """Target canvas for the perspective warp."""
+
     width: int
     height: int
+
 
 @dataclass(frozen=True)
 class BlockSpec:
     """Rectangular block and its grid."""
+
     x: int
     y: int
     w: int
@@ -33,15 +40,19 @@ class BlockSpec:
     cols: int
     pad: int = 0
 
+
 @dataclass(frozen=True)
 class DecodeThresholds:
     """Binary and selection thresholds."""
+
     binarize: int | None = None
     fill_frac: float = 0.18
+
 
 @dataclass(frozen=True)
 class SelectDet:
     """Which detection to use from a YOLO .txt."""
+
     mode: Literal["max_conf", "index"] = "max_conf"
     index: int = 0
 
@@ -58,15 +69,11 @@ def _order_quad(points: Iterable[Tuple[float, float]]) -> Quad:
     return Quad(tuple(tl), tuple(tr), tuple(br), tuple(bl))
 
 
-
-
 # --- Part 1: IO ---
 
 
 def load_yolo_pose_keypoints(
-    img_path: str | Path,
-    txt_path: str | Path,
-    select: SelectDet = SelectDet()
+    img_path: str | Path, txt_path: str | Path, select: SelectDet = SelectDet()
 ) -> List[Tuple[float, float]]:
     """Parse YOLO pose .txt and return pixel (x,y) keypoints."""
     img_path, txt_path = Path(img_path), Path(txt_path)
@@ -100,12 +107,16 @@ def load_yolo_pose_keypoints(
         kps_norm: list[tuple[float, float]] = []
         kp_confs: list[float] = []
         for k in range(K):
-            xi, yi, ci = rest[3*k:3*k+3]
+            xi, yi, ci = rest[3 * k : 3 * k + 3]
             kps_norm.append((xi, yi))
             kp_confs.append(ci)
 
         kps_px = [(xi * W, yi * H) for (xi, yi) in kps_norm]
-        score = obj_conf if obj_conf is not None else (float(np.mean(kp_confs)) if kp_confs else 0.0)
+        score = (
+            obj_conf
+            if obj_conf is not None
+            else (float(np.mean(kp_confs)) if kp_confs else 0.0)
+        )
         dets.append((score, kps_px))
 
     if not dets:
@@ -118,24 +129,40 @@ def load_yolo_pose_keypoints(
     return kps
 
 
-
-
 # --- Part 2 : identify the blocks ---
 
 
-
-def warp_by_keypoints(img: np.ndarray, keypoints_xy: Iterable[Tuple[float, float]], cfg: WarpConfig) -> np.ndarray:
+def warp_by_keypoints(
+    img: np.ndarray, keypoints_xy: Iterable[Tuple[float, float]], cfg: WarpConfig
+) -> np.ndarray:
     """Warp image to a fixed canvas using 4 extreme keypoints."""
     q = _order_quad(keypoints_xy)
     src = np.array([q.tl, q.tr, q.br, q.bl], dtype=np.float32)
-    dst = np.array([(0, 0), (cfg.width - 1, 0), (cfg.width - 1, cfg.height - 1), (0, cfg.height - 1)], dtype=np.float32)
+    dst = np.array(
+        [
+            (0, 0),
+            (cfg.width - 1, 0),
+            (cfg.width - 1, cfg.height - 1),
+            (0, cfg.height - 1),
+        ],
+        dtype=np.float32,
+    )
     M = cv2.getPerspectiveTransform(src, dst)
     return cv2.warpPerspective(img, M, (cfg.width, cfg.height), flags=cv2.INTER_LINEAR)
 
+
 def extract_block_cells(warped: np.ndarray, spec: BlockSpec) -> List[List[np.ndarray]]:
     """Split a rectangular block into (rows×cols) cell images."""
-    x0, y0, w, h, r, c, p = spec.x, spec.y, spec.w, spec.h, spec.rows, spec.cols, spec.pad
-    roi = warped[max(0, y0):y0 + h, max(0, x0):x0 + w]
+    x0, y0, w, h, r, c, p = (
+        spec.x,
+        spec.y,
+        spec.w,
+        spec.h,
+        spec.rows,
+        spec.cols,
+        spec.pad,
+    )
+    roi = warped[max(0, y0) : y0 + h, max(0, x0) : x0 + w]
     cell_w = (roi.shape[1] - 2 * p) // c
     cell_h = (roi.shape[0] - 2 * p) // r
     cells: List[List[np.ndarray]] = []
@@ -144,11 +171,9 @@ def extract_block_cells(warped: np.ndarray, spec: BlockSpec) -> List[List[np.nda
         for j in range(c):
             xs = p + j * cell_w
             ys = p + i * cell_h
-            row.append(roi[ys:ys + cell_h, xs:xs + cell_w])
+            row.append(roi[ys : ys + cell_h, xs : xs + cell_w])
         cells.append(row)
     return cells
-
-
 
 
 # --- Part 3 : decode the blocks ---
@@ -164,13 +189,17 @@ def _block_binarize(roi: np.ndarray, thr: int | None) -> np.ndarray:
     bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     return bw
 
+
 def _cell_mask(h: int, w: int, shrink: float = 0.78) -> np.ndarray:
     r = int(0.5 * shrink * min(h, w))
     yy, xx = np.ogrid[:h, :w]
     cy, cx = h // 2, w // 2
     return ((yy - cy) ** 2 + (xx - cx) ** 2 <= r * r).astype(np.uint8)
 
-def _scores_from_cells(cells: List[List[np.ndarray]], thr: DecodeThresholds) -> np.ndarray:
+
+def _scores_from_cells(
+    cells: List[List[np.ndarray]], thr: DecodeThresholds
+) -> np.ndarray:
     roi = np.vstack([np.hstack(row) for row in cells])
     bw = _block_binarize(roi, thr.binarize)
     h, w = cells[0][0].shape[:2]
@@ -184,7 +213,10 @@ def _scores_from_cells(cells: List[List[np.ndarray]], thr: DecodeThresholds) -> 
             scores[i, j] = float(cv2.countNonZero(inside)) / float(mask.sum() + 1e-6)
     return scores
 
-def decode_student_code(cells: List[List[np.ndarray]], thr: DecodeThresholds) -> List[int]:
+
+def decode_student_code(
+    cells: List[List[np.ndarray]], thr: DecodeThresholds
+) -> List[int]:
     """10×N grid; row 0..8→1..9, row 9→0; pick strongest per column with margin."""
     rows, cols = len(cells), len(cells[0])
     assert rows == 10
@@ -201,7 +233,10 @@ def decode_student_code(cells: List[List[np.ndarray]], thr: DecodeThresholds) ->
             out.append(-1)
     return out
 
-def decode_answers_mcq(cells: List[List[np.ndarray]], thr: DecodeThresholds) -> List[int]:
+
+def decode_answers_mcq(
+    cells: List[List[np.ndarray]], thr: DecodeThresholds
+) -> List[int]:
     """Q×4 grid; pick strongest per row with margin; returns 0..3 or -1."""
     rows, cols = len(cells), len(cells[0])
     assert cols == 4
@@ -216,20 +251,25 @@ def decode_answers_mcq(cells: List[List[np.ndarray]], thr: DecodeThresholds) -> 
     return ans
 
 
-
 def print_answers(
     indices: Sequence[int],
     labels: Tuple[str, str, str, str] = ("a", "b", "c", "d"),
     missing: str = "-",
     cols: int = 2,
 ) -> str:
-    """Return a two-column text table like '1: a)  |  6: c)'. """
+    """Return a two-column text table like '1: a)  |  6: c)'."""
+
     def lab(i: int) -> str:
         return labels[i] if 0 <= i < len(labels) else missing
+
     n = len(indices)
     rows = ceil(n / cols)
     cells: List[str] = [f"{k+1:2d}: {lab(idx)})" for k, idx in enumerate(indices)]
-    col_chunks = [cells[r*1 + c*rows : r*1 + c*rows + rows] for c in range(cols) for r in (0,)]
+    col_chunks = [
+        cells[r * 1 + c * rows : r * 1 + c * rows + rows]
+        for c in range(cols)
+        for r in (0,)
+    ]
     for chunk in col_chunks:
         while len(chunk) < rows:
             chunk.append("")
@@ -241,15 +281,23 @@ def print_answers(
     return "\n".join(lines)
 
 
-
 # --- plots and reports ---
 
+
 def plot_results(
-    orig_bgr, warped_bgr, keypoints,
-    id_cells, resp_left_cells, resp_right_cells,
-    id_block, resp_left_block, resp_right_block,
-    figsize=(20, 6), border_color=(255, 0, 0),
-    border_thickness=6, savefig=None,
+    orig_bgr,
+    warped_bgr,
+    keypoints,
+    id_cells,
+    resp_left_cells,
+    resp_right_cells,
+    id_block,
+    resp_left_block,
+    resp_right_block,
+    figsize=(20, 6),
+    border_color=(255, 0, 0),
+    border_thickness=6,
+    savefig=None,
     # --- page overlays ---
     show_grids: bool = False,
     show_painted: bool = False,
@@ -267,19 +315,27 @@ def plot_results(
 
     # ---------- small utils ----------
     def as_bgr(img):
-        return img if (img.ndim == 3 and img.shape[2] == 3) else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        return (
+            img
+            if (img.ndim == 3 and img.shape[2] == 3)
+            else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        )
 
     def draw_kps(img, kps):
         vis = img.copy()
-        for (x, y) in kps:
+        for x, y in kps:
             cv2.circle(vis, (int(round(x)), int(round(y))), 5, (0, 255, 0), 8)
         return vis
 
     def add_border(img):
         return cv2.copyMakeBorder(
-            img, border_thickness, border_thickness,
-            border_thickness, border_thickness,
-            cv2.BORDER_CONSTANT, value=border_color
+            img,
+            border_thickness,
+            border_thickness,
+            border_thickness,
+            border_thickness,
+            cv2.BORDER_CONSTANT,
+            value=border_color,
         )
 
     def draw_block_rects(img, blocks, color=(0, 0, 255), thickness=4):
@@ -291,7 +347,15 @@ def plot_results(
 
     # ---------- page overlay helpers ----------
     def _iter_cell_slices(spec: BlockSpec, roi_w: int, roi_h: int):
-        _, _, _, _, r, c, p = spec.x, spec.y, spec.w, spec.h, spec.rows, spec.cols, spec.pad
+        _, _, _, _, r, c, p = (
+            spec.x,
+            spec.y,
+            spec.w,
+            spec.h,
+            spec.rows,
+            spec.cols,
+            spec.pad,
+        )
         inner_w = roi_w - 2 * p
         inner_h = roi_h - 2 * p
         cell_w = max(1, inner_w // c)
@@ -309,7 +373,15 @@ def plot_results(
                 yield i, j, xs_c, xe_c, ys_c, ye_c
 
     def _grid_overlay_inplace(vis, spec: BlockSpec):
-        x0, y0, w, h, r, c, p = spec.x, spec.y, spec.w, spec.h, spec.rows, spec.cols, spec.pad
+        x0, y0, w, h, r, c, p = (
+            spec.x,
+            spec.y,
+            spec.w,
+            spec.h,
+            spec.rows,
+            spec.cols,
+            spec.pad,
+        )
         cell_w = (w - 2 * p) // c
         cell_h = (h - 2 * p) // r
         for i in range(1, r):
@@ -328,7 +400,7 @@ def plot_results(
         if thr is None:
             return
         x0, y0, w, h = spec.x, spec.y, spec.w, spec.h
-        roi = vis[y0:y0 + h, x0:x0 + w]
+        roi = vis[y0 : y0 + h, x0 : x0 + w]
         bw = _block_binarize(roi, thr.binarize)  # 255 where ink after INV
         roi_h, roi_w = bw.shape[:2]
         mask_full = np.zeros((roi_h, roi_w), dtype=np.uint8)
@@ -374,7 +446,9 @@ def plot_results(
     q1 = add_border(draw_kps(as_bgr(orig_bgr), keypoints))
 
     warped_vis = as_bgr(warped_bgr).copy()
-    warped_vis = draw_block_rects(warped_vis, [id_block, resp_left_block, resp_right_block])
+    warped_vis = draw_block_rects(
+        warped_vis, [id_block, resp_left_block, resp_right_block]
+    )
     if show_grids:
         for b in (id_block, resp_left_block, resp_right_block):
             _grid_overlay_inplace(warped_vis, b)
@@ -383,13 +457,30 @@ def plot_results(
             _painted_overlay_inplace(warped_vis, b)
     q2 = add_border(warped_vis)
 
-    q3 = add_border(cells_to_grid_debug(id_cells, do_painted=zoom_show_painted, tile=zoom_tile))
-    q4 = add_border(cells_to_grid_debug(resp_left_cells, do_painted=zoom_show_painted, tile=zoom_tile))
-    q5 = add_border(cells_to_grid_debug(resp_right_cells, do_painted=zoom_show_painted, tile=zoom_tile))
+    q3 = add_border(
+        cells_to_grid_debug(id_cells, do_painted=zoom_show_painted, tile=zoom_tile)
+    )
+    q4 = add_border(
+        cells_to_grid_debug(
+            resp_left_cells, do_painted=zoom_show_painted, tile=zoom_tile
+        )
+    )
+    q5 = add_border(
+        cells_to_grid_debug(
+            resp_right_cells, do_painted=zoom_show_painted, tile=zoom_tile
+        )
+    )
 
     imgs = [q1, q2, q3, q4, q5]
     H = max(im.shape[0] for im in imgs)
-    imgs = [cv2.resize(im, (int(im.shape[1] * H / im.shape[0]), H)) if im.shape[0] != H else im for im in imgs]
+    imgs = [
+        (
+            cv2.resize(im, (int(im.shape[1] * H / im.shape[0]), H))
+            if im.shape[0] != H
+            else im
+        )
+        for im in imgs
+    ]
     out = np.hstack(imgs)
 
     fig = plt.figure(figsize=figsize)
@@ -403,12 +494,11 @@ def plot_results(
     plt.close(fig)
 
 
-
-
-
-
-
-def iter_labeled_images(img_dir: Path, lbl_dir: Path, exts={".jpg",".jpeg",".png",".bmp",".tif",".tiff"}):
+def iter_labeled_images(
+    img_dir: Path,
+    lbl_dir: Path,
+    exts={".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"},
+):
     """Yield (img_path, txt_path) only when the label exists."""
     for img_path in img_dir.rglob("*"):
         if not (img_path.is_file() and img_path.suffix.lower() in exts):
@@ -417,23 +507,28 @@ def iter_labeled_images(img_dir: Path, lbl_dir: Path, exts={".jpg",".jpeg",".png
         if txt_path.exists():
             yield img_path, txt_path
 
-    
 
 # --- CSV save ---
+
 
 @dataclass(frozen=True)
 class CsvRow:
     """Single report row."""
+
     student_id: str
     answers: str
     img_path: str
     report_path: str
 
+
 def encode_csv_list(ans: Sequence[int], valid_max: int = 3) -> str:
     """Join answers as comma-separated ints; invalids become -1."""
+
     def norm(x: int) -> int:
         return x if isinstance(x, int) and -1 <= x <= valid_max else -1
+
     return ",".join(str(norm(x)) for x in ans)
+
 
 def append_rows_csv(csv_path: Path, rows: Iterable[CsvRow]) -> None:
     """Append rows; create with header if missing."""
@@ -447,7 +542,6 @@ def append_rows_csv(csv_path: Path, rows: Iterable[CsvRow]) -> None:
             w.writerow([r.student_id, r.answers, r.img_path, r.report_path])
 
 
-
 # --- MAIN LOOP ---
 
 
@@ -455,14 +549,14 @@ def process_dataset(
     root: str,
     report_dir: str,
     model_name: str,
-    warp: WarpConfig, 
-    id_block: BlockSpec, 
-    resp_left_block: BlockSpec, 
-    resp_right_block: BlockSpec, 
-    thr: DecodeThresholds
+    warp: WarpConfig,
+    id_block: BlockSpec,
+    resp_left_block: BlockSpec,
+    resp_right_block: BlockSpec,
+    thr: DecodeThresholds,
 ):
     matplotlib.use("Agg")
-    
+
     root = Path(root)
     report_dir = Path(report_dir)
 
@@ -477,7 +571,9 @@ def process_dataset(
     processed = 0
     errors = 0
 
-    for i, (img_path, txt_path) in enumerate(iter_labeled_images(img_dir, lbl_dir), start=1):
+    for i, (img_path, txt_path) in enumerate(
+        iter_labeled_images(img_dir, lbl_dir), start=1
+    ):
         img = warped = None
         id_cells = respL_cells = respR_cells = None
         kps = None
@@ -488,35 +584,46 @@ def process_dataset(
                 raise RuntimeError(f"cv2.imread failed: {img_path}")
 
             warped = warp_by_keypoints(img, kps, warp)
-            id_cells    = extract_block_cells(warped, id_block)
+            id_cells = extract_block_cells(warped, id_block)
             respL_cells = extract_block_cells(warped, resp_left_block)
             respR_cells = extract_block_cells(warped, resp_right_block)
 
             student_id_ls = decode_student_code(id_cells, thr)
-            answers_int   = decode_answers_mcq(respL_cells, thr) + decode_answers_mcq(respR_cells, thr)
+            answers_int = decode_answers_mcq(respL_cells, thr) + decode_answers_mcq(
+                respR_cells, thr
+            )
 
             student_id_csv = encode_csv_list(student_id_ls, valid_max=9)
-            answers_csv    = encode_csv_list(answers_int, valid_max=3)
+            answers_csv = encode_csv_list(answers_int, valid_max=3)
 
             savefig = report_dir / img_path.name
             try:
                 with matplotlib.pyplot.ioff():
                     plot_results(
-                        img, warped, kps,
-                        id_cells, respL_cells, respR_cells,
-                        id_block, resp_left_block, resp_right_block,
-                        figsize=(24, 8), border_thickness=8,
-                        savefig=savefig
+                        img,
+                        warped,
+                        kps,
+                        id_cells,
+                        respL_cells,
+                        respR_cells,
+                        id_block,
+                        resp_left_block,
+                        resp_right_block,
+                        figsize=(24, 8),
+                        border_thickness=8,
+                        savefig=savefig,
                     )
             finally:
                 matplotlib.pyplot.close("all")
-            
-            rows_buf.append(CsvRow(
-                student_id=student_id_csv,
-                answers=answers_csv,
-                img_path=str(img_path),
-                report_path=str(savefig),
-            ))
+
+            rows_buf.append(
+                CsvRow(
+                    student_id=student_id_csv,
+                    answers=answers_csv,
+                    img_path=str(img_path),
+                    report_path=str(savefig),
+                )
+            )
 
             processed += 1
 
@@ -529,7 +636,6 @@ def process_dataset(
             errors += 1
             print(f"[ERROR] {img_path.name}: {e}")
 
-
     if rows_buf:
         append_rows_csv(csv_out, rows_buf)
         print(f"[FLUSH] final batch: {len(rows_buf)} rows")
@@ -540,19 +646,19 @@ def process_dataset(
 
 # --- INSPECT RESULT ---
 
+
 def inspect_results(
     root: str,
     results_dir: str,
-    warp: WarpConfig, 
-    id_block: BlockSpec, 
-    resp_left_block: BlockSpec, 
-    resp_right_block: BlockSpec, 
+    warp: WarpConfig,
+    id_block: BlockSpec,
+    resp_left_block: BlockSpec,
+    resp_right_block: BlockSpec,
     thr: DecodeThresholds,
     limit: int = 10,
 ):
     root = Path(root)
     results_dir = Path(results_dir)
-
 
     img_dir = root / "images"
     lbl_dir = root / "labels"
@@ -560,7 +666,7 @@ def inspect_results(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     n_total = 0
-    n_done  = 0
+    n_done = 0
 
     for i, (img_path, txt_path) in enumerate(iter_labeled_images(img_dir, lbl_dir)):
         n_total += 1
@@ -575,33 +681,39 @@ def inspect_results(
 
         warped = warp_by_keypoints(img, kps, warp)
 
-        id_cells    = extract_block_cells(warped, id_block)
+        id_cells = extract_block_cells(warped, id_block)
         respL_cells = extract_block_cells(warped, resp_left_block)
         respR_cells = extract_block_cells(warped, resp_right_block)
 
         student_id = decode_student_code(id_cells, thr)
-        answers = (
-            decode_answers_mcq(respL_cells, thr) +
-            decode_answers_mcq(respR_cells, thr)
+        answers = decode_answers_mcq(respL_cells, thr) + decode_answers_mcq(
+            respR_cells, thr
         )
 
         print(f"student_id: {student_id}\n")
         print(print_answers(answers))
 
         plot_results(
-            img, warped, kps,
-            id_cells, respL_cells, respR_cells,
-            id_block, resp_left_block, resp_right_block,
-            figsize=(24, 8), border_thickness=8,
+            img,
+            warped,
+            kps,
+            id_cells,
+            respL_cells,
+            respR_cells,
+            id_block,
+            resp_left_block,
+            resp_right_block,
+            figsize=(24, 8),
+            border_thickness=8,
             show_grids=True,
             show_painted=True,
             thr=thr,
-            mask_shrink=0.85, 
+            mask_shrink=0.85,
             painted_alpha=0.40,
-            zoom_show_painted=True
+            zoom_show_painted=True,
         )
 
-        print("-"*50, "\n"*3)
+        print("-" * 50, "\n" * 3)
         n_done += 1
 
         if i > limit:
