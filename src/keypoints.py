@@ -338,6 +338,7 @@ def predict_yolo(
     model_path: str, tmp_root: Path, conf: float, imgsz: int
 ) -> Path | None:
     model = YOLO(model_path)
+    print("Running YOLO inference...")
     preds = model.predict(
         source=str(tmp_root / "images"),
         conf=conf,
@@ -349,6 +350,7 @@ def predict_yolo(
         stream=True,
     )
     save_dir = None
+    print("Saving predictions...")
     for r in preds:
         save_dir = r.save_dir
     if save_dir is None:
@@ -536,12 +538,15 @@ def run_corner_pose(
     d = _ensure_dirs(out_root, tmp_root)
     cropper = CornerCropper(CropCfg(factor=factor, bbox_pad=0.15, out_ext=".jpg"))
 
+    print("Listing images")
     imgs = _list_images(images_dir)
+    print("Cropping images")
     metas = crop_images(imgs, cropper, tmp_root, factor=factor)
     if not metas:
         print("no images found.")
         return
 
+    print("Predicitng YOLO")
     lbl_pred_root = predict_yolo(model_path, tmp_root, conf=conf, imgsz=imgsz)
     if lbl_pred_root is None:
         print("[ERROR] No predictions produced (save_dir is None).")
@@ -550,6 +555,7 @@ def run_corner_pose(
 
     by_page: Dict[str, Dict[str, List]] = {}
     for m in metas:
+        print(f"[INFO] processing crop: {m.crop_name}")
         pr = lbl_pred_root / f"{m.crop_name}.txt"
         pack = by_page.setdefault(m.page_rel, {"metas": [None] * 4, "rows": [None] * 4})
         if pr.exists():
