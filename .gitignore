@@ -17,3 +17,7 @@ yolo*.pt
 /labelme2coco-keypoints
 
 yolo_train.sh
+
+.envrc
+.direnv/
+.ipynb_checkpoints/
