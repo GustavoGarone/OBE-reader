@@ -1,24 +1,33 @@
 # 🧠 OBE-Reader
 
-Sistema para leitura automática de provas (OMR), usando visão computacional e modelos YOLOv8-Pose para detectar cantos, alinhar páginas e identificar respostas e IDs.
+Sistema para leitura automática de provas (OMR), usando visão computacional e
+modelos YOLOv8-Pose para detectar cantos, alinhar páginas e identificar respostas e IDs.
 O foco é obter alta acurácia com imagens simples (scanner ou foto).
 
 ## ⚙️ Instalação
 
 ```bash
-git clone <repo_url>
+git clone https://github.com/ptonso/OBE-reader.git
 cd OBE-reader
-python3 -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
+```
+
+### ❄ Para o Nix
+
+```
+nix-shell default.nix
+```
+
+Recomendamos usar o [direnv](https://wiki.nixos.org/wiki/Direnv):
+```
+echo "use nix" >> .envrc
 ```
 
 ## 🚀 Como usar
 
-Coloque todas as provas em:
-`data/00--raw/...`
-
-`flatten_unzip.py` auxilia a padronização da pasta.
+Coloque todas as provas em: `data/00--raw/...` e execute
+`flatten_unzip.py data/00--raw/ data/01--cleaned/10--start/` para auxiliar na
+organização das pastas.
 
 Execute os notebooks na ordem:
 
@@ -33,8 +42,11 @@ auxilia a para corrigir manualmente possíveis erros.
 
 
 ## 📝 Importante:
+
 Respeite os pedidos de inspeção manual indicados nas células dos notebooks
 e ajuste os caminhos de entrada e saída conforme sua máquina.
+
+Recomenda-se usar GPU da NVIDIA (CUDA) para acelerar o processamento.
 
 ## 📂 Estrutura esperada
 
